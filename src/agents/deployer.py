@@ -65,17 +65,6 @@ class DeployerAgent:
                 image=image,
                 name=subdomain,
                 port=port,
-                command=f"bash -c 'pip install -r requirements.txt && {command}'", # Install deps first
-                env={"PORT": str(port)}
-            )
-            logs.append(deploy_res)
-            
-            # ... (အပေါ်က Code တွေ အတူတူပဲ) ...
-            
-            deploy_res = docker_mgr.start_container(
-                image=image,
-                name=subdomain,
-                port=port,
                 command=f"bash -c 'pip install -r requirements.txt && {command}'", 
                 env={"PORT": str(port)}
             )
