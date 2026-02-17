@@ -198,7 +198,8 @@ class DeployerAgent:
                 pass
             
             # 🔥 Smart Health Check Logic
-            if "SUCCESS" in str(deploy_res) or "Started" in str(deploy_res) or "Restarted" in str(deploy_res):
+            # "Deployed" ဆိုတဲ့ စာလုံးပါရင်လည်း Success လို့ ယူဆမယ်
+            if "SUCCESS" in str(deploy_res) or "Started" in str(deploy_res) or "Restarted" in str(deploy_res) or "Deployed" in str(deploy_res):
                 
                 # 🛑 Simple Script Bypass: Web Server မဟုတ်ရင် Health Check ကျော်မယ်
                 # Docker Log ထဲမှာ "Uvicorn running" (သို့) "Streamlit" မတွေ့ရင် Script လို့ ယူဆမယ်
