@@ -12,12 +12,16 @@ RUN apt-get update && apt-get install -y \
     procps \
     gnupg \
     lsb-release \
-    # Playwright dependencies (Browser အတွက်)
+    # Playwright & GUI dependencies
     libgstreamer-gl1.0-0 \
     libnss3 \
     libxss1 \
     libasound2 \
     fonts-noto-color-emoji \
+    # 🔥 Tkinter Support (Calculator လို App တွေအတွက်)
+    python3-tk \
+    tk-dev \
+    libx11-6 \
     && rm -rf /var/lib/apt/lists/*
 
 # 2. Install Docker CLI (Host Docker ကို Agent က လှမ်းခိုင်းနိုင်အောင်)

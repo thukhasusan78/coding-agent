@@ -207,12 +207,26 @@ class DeployerAgent:
                 initial_logs = container.logs().decode('utf-8').lower()
                 
                 if not any(x in initial_logs for x in ["listening", "running on", "uvicorn", "streamlit", "http server"]):
-                    print(f"ℹ️ {subdomain} appears to be a background script (No Web Server detected). Skipping HTTP Health Check.")
-                    final_url = "Running in Background (Check Logs)"
-                    logs.append("✅ Background Script Started Successfully.")
+                    # 🛑 Double Check: Web Server မဟုတ်ပေမယ့် Container က သေသွားပြီလား?
+                    container.reload()
+                    if container.status != "running":
+                        print(f"❌ {subdomain} crashed immediately.")
+                        return {
+                            "error_logs": f"CRASH DETECTED: Container stopped immediately after starting.\nLast Logs:\n{initial_logs}",
+                            "logs": logs + [f"❌ {subdomain} crashed. See logs."]
+                        }
+
+                    print(f"ℹ️ {subdomain} appears to be a background script. Skipping HTTP Health Check.")
+                    
                     # 📡 Log ပို့မယ်
+                    log_file = f"workspace/{subdomain}_deploy.log"
+                    # Log မရှိရင်တောင် အလွတ်မဖြစ်အောင် ကာမယ်
+                    if not os.path.exists(log_file) or os.path.getsize(log_file) == 0:
+                        with open(log_file, "w") as f: f.write("No logs captured (Process might be silent).")
+
                     await notifier.send_status("✅ Background Script Running. Sending logs...")
                     await notifier.send_log_file(log_file, caption=f"📜 Execution Log: {subdomain}")
+                    
                     return {"final_report": f"🚀 Script is running in background!\nCheck logs with: `docker logs -f {subdomain}`"}
 
                 # Web Server ဆိုမှ အောက်က Health Check ကို ဆက်လုပ်မယ်
