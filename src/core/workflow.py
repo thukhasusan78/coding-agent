@@ -145,7 +145,8 @@ workflow.add_conditional_edges(
     route_tech_lead,
     {
         "coder": "coder",
-        "reviewer": "reviewer" # 🔥 လမ်းကြောင်းပြောင်းလိုက်သည် (Deployer မဟုတ်တော့ပါ)
+        "reviewer": "reviewer",
+        END: END  # ✅ "Critical Failure" ဖြစ်ရင် ထွက်ပေါက်ပေးလိုက်တာပါ
     }
 )
 
