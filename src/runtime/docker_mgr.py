@@ -74,7 +74,8 @@ class DockerManager:
                 environment=env or {},
                 labels=labels,
                 network=self.network_name,
-                mem_limit="512m"
+                mem_limit="512m",
+                working_dir="/app"
             )
 
             # 3. Inject Code (Code တွေကို Container ထဲ လှမ်းပို့မယ်)
