@@ -13,3 +13,4 @@ workspace/*.sqlite-walworkspace/*.sqlite
 workspace/*.sqlite-wal
 workspace/*.sqlite-shm
 workspace/chroma_db/
+workspace/memory_db/
