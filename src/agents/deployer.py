@@ -97,13 +97,17 @@ class DeployerAgent:
                 else:
                     raise Exception("Not running")
             except:
-                # မရှိမှ အသစ် run မယ်
+                # Project Folder အပြည့်အစုံကို ယူမယ် (ဥပမာ: /app/workspace/bitcoin_tracker)
+                project_full_path = os.path.dirname(os.path.join("/app/workspace", main_file))
+                
+                # မရှိရင် အသစ် run မယ်
                 deploy_res = docker_mgr.start_container(
                     image=image,
                     name=subdomain,
                     port=port,
-                    command=f"bash -c 'pip install -r requirements.txt && {command}'", 
-                    env={"PORT": str(port)}
+                    command=f"pip install -r requirements.txt && {command}", # bash -c မလိုတော့ဘူး (exec_run က handle လုပ်မယ်)
+                    env={"PORT": str(port)},
+                    code_path=project_full_path # 🔥 Code လမ်းကြောင်း ပို့လိုက်ပြီ!
                 )
             
             logs.append(str(deploy_res))

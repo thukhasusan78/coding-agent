@@ -92,7 +92,7 @@ class CoderAgent:
                 # Backup Logic (Gemini 2.0 Flash)
                 if "503" in error_msg or "429" in error_msg or "deadline" in error_msg.lower():
                     if attempt == settings.MAX_RETRIES - 1:
-                        print("❌ Switching to Backup Model (Gemini 2.0 Flash)...")
+                        print("❌ Switching to Backup Model (Gemini 2.5 Flash)...")
                         try:
                             # Backup call (also in thread)
                             backup_resp = await asyncio.to_thread(

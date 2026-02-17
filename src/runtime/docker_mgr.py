@@ -1,6 +1,9 @@
 import docker
 import time
 import logging
+import os
+import tarfile
+import io
 from config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -10,65 +13,49 @@ class DockerManager:
         try:
             self.client = docker.from_env()
             logger.info("🐳 Docker Manager Connected")
-            # Traefik Network ကို Auto ရှာမယ်
             self.network_name = self._get_traefik_network()
-            
-            # 🔥 NEW: စစချင်း Run တာနဲ့ အမှိုက်ရှင်းမယ် (Disk Space သက်သာအောင်)
             self.prune_resources()
-            
         except Exception as e:
             logger.error(f"❌ Docker Connection Failed: {e}")
             self.client = None
             self.network_name = "ironman_net"
 
     def _get_traefik_network(self):
-        """Traefik Container ဘယ် Network သုံးနေလဲ လှမ်းချောင်းကြည့်မယ့် Function"""
         try:
-            traefik_container = self.client.containers.get("ironman-traefik")
-            networks = traefik_container.attrs['NetworkSettings']['Networks']
-            if networks:
-                net_name = list(networks.keys())[0]
-                logger.info(f"🌐 Connected to Traefik Bridge: {net_name}")
-                return net_name
-        except docker.errors.NotFound:
-            logger.warning("⚠️ Traefik Container not found! Using default 'ironman_net'.")
-        except Exception as e:
-            logger.warning(f"⚠️ Error detecting network: {e}")
-        return "ironman_net"
+            traefik = self.client.containers.get("ironman-traefik")
+            networks = traefik.attrs['NetworkSettings']['Networks']
+            return list(networks.keys())[0] if networks else "ironman_net"
+        except:
+            return "ironman_net"
 
     def prune_resources(self):
-        """
-        🔥 AUTO-PRUNE SYSTEM: 
-        မလိုတဲ့ Container, Network, Image တွေကို ရှင်းထုတ်ပြီး VPS Storage ကို ကာကွယ်မယ်။
-        """
         if not self.client: return
         try:
-            logger.info("🧹 Auto-Pruning Docker Resources...")
-            # Stopped Containers တွေကို ဖျက်မယ်
             self.client.containers.prune()
-            # Dangling Images (နာမည်မရှိတဲ့ Image အဟောင်းတွေ) ကို ဖျက်မယ်
             self.client.images.prune(filters={'dangling': True})
-            # မသုံးတဲ့ Network တွေ ဖျက်မယ်
-            self.client.networks.prune()
-            logger.info("✨ Docker System Cleaned.")
-        except Exception as e:
-            logger.warning(f"⚠️ Prune Warning: {e}")
+        except: pass
 
-    def start_container(self, image: str, name: str, port: int, command: str = None, env: dict = None):
-        if not self.client:
-            return "❌ Docker Client not available."
+    # 🔥 Helper: Folder တစ်ခုလုံးကို Tar ဖိုင်ပြောင်းပြီး Stream လုပ်မယ်
+    def _create_archive(self, src_path):
+        stream = io.BytesIO()
+        with tarfile.open(fileobj=stream, mode='w|') as tar:
+            # Folder အောက်က ဖိုင်တွေကိုပဲ ယူမယ် (Root အနေနဲ့)
+            arcname_root = os.path.basename(src_path)
+            tar.add(src_path, arcname=".") 
+        stream.seek(0)
+        return stream
+
+    def start_container(self, image: str, name: str, port: int, command: str = None, env: dict = None, code_path: str = None):
+        if not self.client: return "❌ Docker Client Missing"
 
         try:
-            # 1. Clean up old container
+            # 1. Kill Old
             try:
                 old = self.client.containers.get(name)
-                # 🔥 Memory Saver: အဟောင်းကို Stop လုပ်ရုံမကဘူး Remove ပါလုပ်မယ်
                 old.remove(force=True)
-                logger.info(f"♻️ Removed old container: {name}")
-            except docker.errors.NotFound:
-                pass
+                logger.info(f"♻️ Old container removed: {name}")
+            except: pass
 
-            # 2. Labels for Traefik
             labels = {
                 "traefik.enable": "true",
                 f"traefik.http.routers.{name}.rule": f"Host(`{name}.thukha.online`)",
@@ -76,27 +63,41 @@ class DockerManager:
                 "traefik.docker.network": self.network_name
             }
 
-            logger.info(f"🚀 Starting container {name} on network '{self.network_name}'...")
-            
-            # 3. Run Container (Limit Memory to avoid VPS Freeze)
+            # 2. Start Container (Sleep Mode - Code ထည့်ဖို့ စောင့်ခိုင်းမယ်)
+            # 🔥 Code မရောက်ခင် App မ Run အောင် 'tail -f /dev/null' နဲ့ အရင်မောင်းထားမယ်
+            logger.info(f"🚀 Initializing container {name}...")
             container = self.client.containers.run(
                 image=image,
                 name=name,
-                command=command,
+                command="tail -f /dev/null", # Keep alive command
                 detach=True,
                 environment=env or {},
                 labels=labels,
                 network=self.network_name,
-                restart_policy={"Name": "on-failure", "MaximumRetryCount": 3},
-                # 🔥 VPS Protection: Container တစ်ခုကို RAM 512MB ထက် ပိုမပေးဘူး
-                mem_limit="512m" 
+                mem_limit="512m"
             )
+
+            # 3. Inject Code (Code တွေကို Container ထဲ လှမ်းပို့မယ်)
+            if code_path and os.path.exists(code_path):
+                logger.info(f"📦 Injecting code from {code_path}...")
+                archive = self._create_archive(code_path)
+                # /app folder ထဲကို ဖြည်ချမယ်
+                container.put_archive("/app", archive)
             
-            return f"✅ Container Started: {name} (ID: {container.short_id})\n🌍 URL: http://{name}.thukha.online"
+            # 4. Execute Actual Command (App ကို တကယ် Run မယ်)
+            if command:
+                logger.info(f"⚡ Executing start command: {command}")
+                # Detached mode နဲ့ run မယ်
+                container.exec_run(
+                    f"bash -c '{command}'", 
+                    detach=True
+                )
+
+            return f"✅ Container Deployed: {name}\n🌍 URL: http://{name}.thukha.online"
 
         except Exception as e:
-            logger.error(f"🔥 Docker Run Error: {e}")
-            return f"❌ Failed to start container: {e}"
+            logger.error(f"🔥 Docker Error: {e}")
+            return f"❌ Deployment Error: {e}"
 
     def list_containers(self):
         if not self.client: return []
