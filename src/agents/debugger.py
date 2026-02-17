@@ -2,6 +2,7 @@ from src.core.state import AgentState
 from src.core.llm import llm_engine
 from config.settings import settings
 from src.tools.files import file_tools
+from google.genai.types import GenerateContentConfig
 
 class DebuggerAgent:
     async def execute(self, state: AgentState):
@@ -41,100 +42,73 @@ class DebuggerAgent:
                 "retry_count": 0,
                 "logs": [f"✅ Verified: {filename} (Gemini Passed)"]
             }
+        # ... (အပေါ်က try: compile(...) အပိုင်းက ဒီတိုင်းထားမယ်) ...
+
         except Exception as e:
             initial_error = str(e)
-            print(f"⚠️ Stage 1: Gemini Failed ({initial_error}). Calling Sonnet 3.5...")
+            print(f"⚠️ Stage 1: Syntax Check Failed ({initial_error}). Asking Gemini Flash to fix...")
 
-        # 🚨 STAGE 2: CLAUDE 3.5 SONNET
-        client = llm_engine.get_openrouter_client()
+        # 🚨 FIXED: Only use Gemini Flash (No Sonnet/Opus)
+        # Budget Save ဖြစ်အောင် Google Gemini ကိုပဲ သုံးပါမယ်။
         
         try:
-            prompt_sonnet = f"""
-            You are a Senior Python QA. Fix this code.
-            Error: {initial_error}
-            Code:
+            client = llm_engine.get_gemini_client()
+            
+            prompt_fix = f"""
+            You are a Senior Python Expert. Fix the following code.
+            
+            ERROR: {initial_error}
+            
+            BROKEN CODE:
             ```python
             {code}
             ```
-            Return ONLY fixed code inside ```python ... ``` block.
+            
+            INSTRUCTION:
+            - Return ONLY the fixed code inside ```python ... ``` block.
+            - Do NOT explain. Just fix the syntax/logic error.
             """
-            response = await client.chat.completions.create(
-                model=settings.MODEL_DEBUGGER,
-                messages=[{"role": "user", "content": prompt_sonnet}]
+            
+            # Gemini Call
+            response = client.models.generate_content(
+                model=settings.MODEL_CODER, # Gemini 3 Flash
+                contents=prompt_fix,
+                config=GenerateContentConfig(temperature=0.2)
             )
             
-            fixed_code = response.choices[0].message.content
-            # Extract Code
-            if "```" in fixed_code:
-                fixed_code = fixed_code.split("```")[1]
-                if fixed_code.startswith("python"): fixed_code = fixed_code[6:]
-                fixed_code = fixed_code.split("```")[0].strip()
+            fixed_code = response.text
             
+            # Cleaning Code
+            if "```" in fixed_code:
+                parts = fixed_code.split("```")
+                if len(parts) > 1:
+                    fixed_code = parts[1]
+                    if fixed_code.startswith("python"): fixed_code = fixed_code[6:]
+                    fixed_code = fixed_code.strip()
+            
+            # Syntax Check Again
             compile(fixed_code, filename, 'exec')
             
+            # Save Fixed File
             file_tools.write_file(filename, fixed_code)
-            print(f"✅ Stage 2: Sonnet 3.5 Fixed {filename}")
+            print(f"✅ Debugger: Gemini Flash fixed {filename}")
             
             plan = state['plan']
             task['status'] = 'done'
             updated_plan = [t if t['file'] != task['file'] else task for t in plan]
+            
             return {
                 "code_content": fixed_code,
                 "plan": updated_plan, 
                 "error_logs": "",
                 "created_files": created_files,
                 "retry_count": 0,
-                "logs": [f"✅ Debugger: Sonnet 3.5 fixed {filename}"]
+                "logs": [f"✅ Debugger: Gemini Flash fixed {filename}"]
             }
 
-        except Exception as sonnet_err:
-            sonnet_error_msg = str(sonnet_err)
-            print(f"🔥 Stage 2 Failed ({sonnet_error_msg}). Awakening Opus...")
-            
-            # 🚨 STAGE 3: CLAUDE OPUS (The Last Resort)
-            try:
-                prompt_opus = f"""
-                You are Claude Opus. Fix this Python code.
-                Initial Error: {initial_error}
-                Sonnet Error: {sonnet_error_msg}
-                Code:
-                ```python
-                {fixed_code if 'fixed_code' in locals() else code}
-                ```
-                FIX IT.
-                """
-                
-                response_opus = await client.chat.completions.create(
-                    model=settings.MODEL_SUPER,
-                    messages=[{"role": "user", "content": prompt_opus}]
-                )
-                
-                opus_code = response_opus.choices[0].message.content
-                if "```" in opus_code:
-                    opus_code = opus_code.split("```")[1]
-                    if opus_code.startswith("python"): opus_code = opus_code[6:]
-                    opus_code = opus_code.split("```")[0].strip()
-
-                compile(opus_code, filename, 'exec')
-
-                file_tools.write_file(filename, opus_code)
-                print(f"🚀 Stage 3: Opus Saved the day!")
-                
-                plan = state['plan']
-                task['status'] = 'done'
-                updated_plan = [t if t['file'] != task['file'] else task for t in plan]
-                return {
-                    "code_content": opus_code,
-                    "plan": updated_plan, 
-                    "error_logs": "",
-                    "created_files": created_files,
-                    "retry_count": 0,
-                    "logs": [f"🚀 Debugger: Opus fixed {filename}"]
-                }
-
-            except Exception as opus_err:
-                print(f"💀 Stage 3 Failed. Circling back to Developer...")
-                return {
-                    "error_logs": f"Opus Failed: {str(opus_err)}. \nOriginal Error: {initial_error}",
-                    "logs": [f"🔄 Debugger Failed. Looping back to Developer."] 
-                }
+        except Exception as gemini_err:
+            print(f"💀 Debugger Failed: {gemini_err}")
+            return {
+                "error_logs": f"Fix Failed: {str(gemini_err)}. \nOriginal: {initial_error}",
+                "logs": [f"❌ Debugger could not fix {filename}."] 
+            }

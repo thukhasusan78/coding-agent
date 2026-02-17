@@ -49,6 +49,37 @@ class DockerManager:
         if not self.client: return "❌ Docker Client Missing"
 
         try:
+            # 🔥 SMART HOT RELOAD (VPS Saver)
+            # Container အဟောင်းရှိရင် ဖျက်မပစ်ဘဲ Code ပဲ အသစ်လဲမယ်
+            try:
+                container = self.client.containers.get(name)
+                if container.status == "running":
+                    logger.info(f"♻️ Hot Reloading container: {name}...")
+                    
+                    # 1. Code အသစ်ထည့်မယ်
+                    if code_path and os.path.exists(code_path):
+                        logger.info(f"📦 Injecting updated code...")
+                        archive = self._create_archive(code_path)
+                        container.put_archive("/app", archive)
+                    
+                    # 2. Process အဟောင်းတွေကို ရှင်းမယ် (Port မတိုက်အောင်)
+                    # (Docker file မှာ procps သွင်းထားလို့ pkill သုံးလို့ရတယ်)
+                    logger.info("🛑 Killing old processes...")
+                    container.exec_run("pkill -f python")
+                    container.exec_run("pkill -f streamlit")
+                    container.exec_run("pkill -f uvicorn")
+                    
+                    # 3. Command အသစ် Run မယ်
+                    if command:
+                        logger.info(f"⚡ Restarting app: {command}")
+                        container.exec_run(f"bash -c '{command}'", detach=True)
+                        
+                    return f"✅ Hot Reload Success: {name}\n🌍 URL: http://{name}.thukha.online"
+            except Exception as e:
+                logger.warning(f"⚠️ Hot Reload Failed ({e}). Switching to Recreate Mode.")
+                # Hot Reload မရမှ အောက်က Recreate Logic ကို ဆက်လုပ်မယ်
+
+            # --- OLD LOGIC (Full Recreate) ---
             # 1. Kill Old
             try:
                 old = self.client.containers.get(name)
@@ -64,7 +95,6 @@ class DockerManager:
             }
 
             # 2. Start Container (Sleep Mode - Code ထည့်ဖို့ စောင့်ခိုင်းမယ်)
-            # 🔥 Code မရောက်ခင် App မ Run အောင် 'tail -f /dev/null' နဲ့ အရင်မောင်းထားမယ်
             logger.info(f"🚀 Initializing container {name}...")
             container = self.client.containers.run(
                 image=image,
@@ -74,21 +104,19 @@ class DockerManager:
                 environment=env or {},
                 labels=labels,
                 network=self.network_name,
-                mem_limit="512m",
+                mem_limit="512m", # 🔥 Ram Limit (2GB VPS အတွက် အရေးကြီး)
                 working_dir="/app"
             )
 
-            # 3. Inject Code (Code တွေကို Container ထဲ လှမ်းပို့မယ်)
+            # 3. Inject Code
             if code_path and os.path.exists(code_path):
                 logger.info(f"📦 Injecting code from {code_path}...")
                 archive = self._create_archive(code_path)
-                # /app folder ထဲကို ဖြည်ချမယ်
                 container.put_archive("/app", archive)
             
-            # 4. Execute Actual Command (App ကို တကယ် Run မယ်)
+            # 4. Execute Actual Command
             if command:
                 logger.info(f"⚡ Executing start command: {command}")
-                # Detached mode နဲ့ run မယ်
                 container.exec_run(
                     f"bash -c '{command}'", 
                     detach=True

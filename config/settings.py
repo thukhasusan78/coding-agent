@@ -16,7 +16,7 @@ class Settings:
 
     # --- Model Configuration ---
     # Architect (Planner) - Claude 3.5 Sonnet is best for reasoning
-    MODEL_ARCHITECT = "anthropic/claude-3.5-sonnet"
+    MODEL_ARCHITECT = "gemini-2.5-pro"
     
     # Coder (Writer) - Gemini Flash is fast & cheap for bulk coding
     MODEL_CODER = "gemini-3-flash-preview"
@@ -27,7 +27,7 @@ class Settings:
     MODEL_DEBUGGER = "anthropic/claude-3.5-sonnet"
     
     # Super Brain (The Last Resort)
-    MODEL_SUPER = "anthropic/claude-opus-4-6"
+    MODEL_SUPER = "gemini-2.5-pro"
     
     # --- System Limits ---
     MAX_RETRIES = 3

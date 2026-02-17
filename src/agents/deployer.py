@@ -7,6 +7,7 @@ from src.tools import git_tools, file_tools
 from src.runtime.docker_mgr import docker_mgr
 from src.core.llm import llm_engine # Brain ကို ခေါ်သုံးမယ်
 from config.settings import settings
+from google.genai.types import GenerateContentConfig
 
 class DeployerAgent:
     async def execute(self, state: AgentState):
@@ -137,11 +138,12 @@ class DeployerAgent:
                     if "Error" in recent_logs or "Exception" in recent_logs or "not found" in recent_logs or container.status != "running":
                         print(f"⚠️ Deployment Warning on Attempt {attempt+1}")
                         
-                        # 🔥 BRAIN POWER: Error ကို Sonnet ဆီ ပို့ပြီး Command အသစ်တောင်းမယ်
+                        # 🔥 BRAIN POWER: Gemini 2.5 Pro (Thinking Model)
                         if attempt < 2: 
-                            logs.append(f"⚠️ Error detected. Asking Sonnet to fix command...")
+                            logs.append(f"⚠️ Error detected. Asking Gemini 2.5 Pro to fix command...")
                             
-                            client = llm_engine.get_openrouter_client() # Sonnet (Paid)
+                            # 👇 OpenRouter မသုံးတော့ဘဲ Google Client တိုက်ရိုက်သုံးမယ်
+                            client = llm_engine.get_gemini_client()
                             
                             prompt = f"""
                             You are a DevOps Expert.
@@ -162,17 +164,19 @@ class DeployerAgent:
                             RESPONSE (Command ONLY):
                             """
                             
-                            # Sonnet ကို မေးမယ်
                             try:
-                                response = await client.chat.completions.create(
+                                # 👇 Gemini Syntax (Settings မှာ MODEL_ARCHITECT ကို 2.5 Pro ထားမယ်)
+                                response = client.models.generate_content(
                                     model=settings.MODEL_ARCHITECT, 
-                                    messages=[{"role": "user", "content": prompt}]
+                                    contents=prompt,
+                                    config=GenerateContentConfig(temperature=0.2)
                                 )
-                                fixed_command = response.choices[0].message.content.strip().replace("`", "")
-                                print(f"💡 Sonnet suggested fix: {fixed_command}")
+                                
+                                fixed_command = response.text.strip().replace("`", "")
+                                print(f"💡 Gemini suggested fix: {fixed_command}")
                                 logs.append(f"💡 AI Fix: Switching to '{fixed_command}'")
                                 current_command = fixed_command 
-                                continue # Loop အစကို ပြန်သွားမယ်
+                                continue 
                             except Exception as e:
                                 logs.append(f"❌ AI Fix Failed: {e}")
 
