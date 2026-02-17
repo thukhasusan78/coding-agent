@@ -4,6 +4,8 @@ import requests
 from src.core.state import AgentState
 from src.tools import git_tools, file_tools
 from src.runtime.docker_mgr import docker_mgr
+from src.core.llm import llm_engine # Brain ကို ခေါ်သုံးမယ်
+from config.settings import settings
 
 class DeployerAgent:
     async def execute(self, state: AgentState):
@@ -70,46 +72,109 @@ class DeployerAgent:
             # App Type & Port Detection
             file_content = file_tools.read_file(main_file)
             image = "python:3.11-slim"
-            command = f"python {main_file}"
-            port = 8000
-
+            
+            # 🔥 FIX: Container ထဲမှာ Folder အထပ်မရှိတော့လို့ ဖိုင်နာမည်သန့်သန့်ကိုပဲ ယူမယ်
+            # (ဥပမာ: bitcoin_tracker/main.py -> main.py)
+            container_file = os.path.basename(main_file)
+            
+            # --- Smart Command Strategy ---
+            current_command = command
+            
+            # Initial command logic (Basic Heuristic)
             if "streamlit" in file_content:
                 port = 8501
-                command = f"streamlit run {main_file} --server.port 8501 --server.address 0.0.0.0"
-                
+                # ပထမအကြိမ်ကတော့ ရိုးရိုးပဲ စမ်းမယ်
+                current_command = f"streamlit run {container_file} --server.port 8501 --server.address 0.0.0.0"
             elif "fastapi" in file_content.lower():
                 port = 8000
-                app_module = main_file.replace(".py", "").replace("/", ".")
-                command = f"uvicorn {app_module}:app --host 0.0.0.0 --port 8000"
+                app_module = container_file.replace(".py", "")
+                current_command = f"uvicorn {app_module}:app --host 0.0.0.0 --port 8000"
 
-            # 3. Docker Container Deployment
-            print(f"🚀 Deploying {subdomain} on Port {port}...")
+            # 3. Smart Deployment Loop (Auto-Fixing)
+            print(f"🚀 Deploying {subdomain} with Smart Recovery...")
             logs.append(f"🚀 Deploying {subdomain}...")
+
+            # Project Folder အပြည့်အစုံ
+            project_full_path = os.path.dirname(os.path.join("/app/workspace", main_file))
             
-            deploy_res = "Init"
-            try:
-                # 🔥 FIX: Container ရှိပြီးသားဆိုရင် Restart ပဲလုပ်မယ် (Loop မဖြစ်အောင်)
-                existing = docker_mgr.client.containers.get(subdomain)
-                if existing.status == "running":
-                    logs.append(f"ℹ️ Container {subdomain} is already running. Restarting...")
-                    existing.restart()
-                    deploy_res = f"✅ Container Restarted: {subdomain}"
-                else:
-                    raise Exception("Not running")
-            except:
-                # Project Folder အပြည့်အစုံကို ယူမယ် (ဥပမာ: /app/workspace/bitcoin_tracker)
-                project_full_path = os.path.dirname(os.path.join("/app/workspace", main_file))
-                
-                # မရှိရင် အသစ် run မယ်
-                deploy_res = docker_mgr.start_container(
-                    image=image,
-                    name=subdomain,
-                    port=port,
-                    command=f"pip install -r requirements.txt && {command}", # bash -c မလိုတော့ဘူး (exec_run က handle လုပ်မယ်)
-                    env={"PORT": str(port)},
-                    code_path=project_full_path # 🔥 Code လမ်းကြောင်း ပို့လိုက်ပြီ!
-                )
+            deploy_success = False
             
+            # 🔥 ၃ ခါအထိ ကြိုးစားခွင့်ပေးမယ်
+            for attempt in range(3):
+                try:
+                    logs.append(f"🔄 Attempt {attempt+1}: Trying command -> {current_command}")
+                    
+                    # Container အဟောင်းရှိရင် အရင်ဖျက်မယ် (Clean Start ရဖို့)
+                    try:
+                        old = docker_mgr.client.containers.get(subdomain)
+                        old.remove(force=True)
+                    except: pass
+
+                    # Run မယ်
+                    deploy_res = docker_mgr.start_container(
+                        image=image,
+                        name=subdomain,
+                        port=port,
+                        command=f"pip install -r requirements.txt && {current_command}",
+                        env={"PORT": str(port)},
+                        code_path=project_full_path
+                    )
+
+                    # ၅ စက္ကန့်လောက် စောင့်ပြီး Error တက်မတက် "ချောင်း" ကြည့်မယ်
+                    time.sleep(5) 
+                    container = docker_mgr.client.containers.get(subdomain)
+                    
+                    # Log တွေကို စစ်မယ်
+                    recent_logs = container.logs().decode('utf-8')
+                    
+                    if "Error" in recent_logs or "Exception" in recent_logs or "not found" in recent_logs or container.status != "running":
+                        print(f"⚠️ Deployment Warning on Attempt {attempt+1}")
+                        
+                        # 🔥 BRAIN POWER: Error ကို Sonnet ဆီ ပို့ပြီး Command အသစ်တောင်းမယ်
+                        if attempt < 2: # နောက်ဆုံးအကြိမ် မဟုတ်သေးရင် ပြင်ခိုင်းမယ်
+                            logs.append(f"⚠️ Error detected. Asking Sonnet to fix command...")
+                            
+                            client = llm_engine.get_openrouter_client() # Sonnet (Paid)
+                            
+                            prompt = f"""
+                            You are a DevOps Expert.
+                            I tried to run a Python container but it failed.
+                            
+                            CONTEXT:
+                            - File structure inside container: /app/{container_file} (and other files injected flatly)
+                            - Current Command: {current_command}
+                            - ERROR LOGS:
+                            {recent_logs[-1000:]}
+
+                            TASK:
+                            - Analyze the error (e.g., ModuleNotFound, FileDoesNotExist).
+                            - Return ONLY the corrected bash command to run the app.
+                            - Do NOT include 'pip install'. Just the run command.
+                            - Example Output: streamlit run main.py --server.port 8501
+                            
+                            RESPONSE (Command ONLY):
+                            """
+                            
+                            response = await client.chat.completions.create(
+                                model=settings.MODEL_ARCHITECT, # Sonnet
+                                messages=[{"role": "user", "content": prompt}]
+                            )
+                            
+                            fixed_command = response.choices[0].message.content.strip().replace("`", "")
+                            print(f"💡 Sonnet suggested fix: {fixed_command}")
+                            logs.append(f"💡 AI Fix: Switching to '{fixed_command}'")
+                            current_command = fixed_command # Command ကို အစားထိုးလိုက်ပြီ!
+                            continue # Loop အစကို ပြန်သွားပြီး Command အသစ်နဲ့ Run မယ်
+                        
+                    else:
+                        deploy_success = True
+                        logs.append("✅ Container seems stable.")
+                        break # အောင်မြင်ရင် Loop ထဲက ထွက်မယ်
+
+                except Exception as e:
+                    logs.append(f"❌ Exception: {e}")
+                    time.sleep(2)
+
             logs.append(str(deploy_res))
             
             # 🔥 Smart Health Check Logic
