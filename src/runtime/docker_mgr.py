@@ -98,7 +98,7 @@ class DockerManager:
 
         except Exception as e:
             logger.error(f"🔥 Docker Error: {e}")
-            return f"❌ Deployment Error: {e}"
+            raise e
 
     def list_containers(self):
         if not self.client: return []
