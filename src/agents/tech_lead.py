@@ -7,26 +7,35 @@ class TechLeadAgent:
         retry_count = state.get('retry_count', 0)
 
         # 🔥 FIX: Error ပါလာရင် Task အသစ်ပြန်ဖန်တီးမယ် (Self-Healing Logic)
-        if error_logs and retry_count < 3: # ၃ ခါထိ ပြန်ကြိုးစားခွင့်ပေးမယ်
-            print(f"🔄 Self-Healing Triggered! (Attempt {retry_count+1}/3)")
+        if error_logs:
+            if retry_count < 3:
+                print(f"🔄 Self-Healing Triggered! (Attempt {retry_count+1}/3)")
+                
+                # Error ကိုပြင်ဖို့ Task အသစ်လုပ်မယ် (ပိုတိကျတဲ့ Task ပေးမယ်)
+                fix_task = {
+                    "file": "error_fix_strategy.md", 
+                    "description": f"CRITICAL: The previous deployment failed. Analyze logs, adjust code/requirements, and RETRY. ERROR: {error_logs}",
+                    "status": "pending"
+                }
+                
+                plan.insert(0, fix_task)
+                
+                return {
+                    "current_task": None,
+                    "plan": plan,
+                    "retry_count": retry_count + 1,
+                    "error_logs": "",
+                    "logs": [f"⚠️ Error Detected. Adding fix task (Attempt {retry_count+1})..."]
+                }
             
-            # Error ကိုပြင်ဖို့ Task အသစ်လုပ်မယ်
-            fix_task = {
-                "file": "error_fix_strategy.md", # Logic စဉ်းစားခိုင်းတာ
-                "description": f"Analyze this deployment error and FIX the code/structure. ERROR: {error_logs}",
-                "status": "pending"
-            }
-            
-            # Plan ရဲ့ ထိပ်ဆုံးမှာ ထည့်လိုက်မယ် (Priority)
-            plan.insert(0, fix_task)
-            
-            return {
-                "current_task": None, # Reset လုပ်
-                "plan": plan,
-                "retry_count": retry_count + 1,
-                "error_logs": "", # Error ကို ယူသုံးပြီးပြီမို့ ရှင်းလိုက်မယ်
-                "logs": [f"⚠️ Error Detected. Adding fix task..."]
-            }
+            else:
+                # 🛑 Circuit Breaker: ၃ ခါကြိုးစားလို့မရရင် "လက်မြှောက်" မယ့် Logic
+                print("🛑 Max Retries Reached. Stopping Loop.")
+                return {
+                    "current_task": None,
+                    "plan": [], # Plan ကို Empty လုပ်လိုက်ရင် Agent ရပ်သွားမယ်
+                    "logs": [f"💥 Critical Failure: Tried to fix 3 times but failed. STOPPING to prevent infinite loop.\nLast Error: {error_logs[:500]}..."]
+                }
         # ပြီးပြီးသားမဟုတ်တဲ့ Task တစ်ခုကို ယူမယ်
         next_task = next((t for t in plan if t['status'] == 'pending'), None)
         

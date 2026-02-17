@@ -21,20 +21,15 @@ class SeniorEngineerBrain:
         os.makedirs("workspace", exist_ok=True)
         
         db_path = "workspace/checkpoints.sqlite"
-        max_size_mb = 50 # 50MB ကျော်ရင် Reset ချမယ် (Text only မို့ များပါတယ်)
+        # 🔥 Senior Fix: Limit ကို 500MB ထိ တိုးပေးလိုက်မယ် (VPS 2GB မှာ ဒီလောက်က အေးဆေးပါ)
+        max_size_mb = 500 
         
         try:
             if os.path.exists(db_path):
                 size_mb = os.path.getsize(db_path) / (1024 * 1024)
                 if size_mb > max_size_mb:
-                    print(f"🧹 Memory Limit Exceeded ({size_mb:.2f}MB). Resetting brain...")
-                    # Database Related File တွေကို (.wal, .shm အပါအဝင်) အကုန်ရှင်းမယ်
-                    for f in glob.glob("workspace/checkpoints.sqlite*"):
-                        try:
-                            os.remove(f)
-                            print(f"🗑️ Deleted old memory: {f}")
-                        except Exception as e:
-                            print(f"⚠️ Failed to delete {f}: {e}")
+                    # ချက်ချင်းမဖျက်တော့ဘူး၊ Backup လုပ်ပြီးမှ ရှင်းခိုင်းမယ် (Safety First)
+                    print(f"⚠️ Memory Warning: Database is huge ({size_mb:.2f}MB). Consider restarting agent manually.")
                 else:
                     print(f"✅ Memory Health Good: {size_mb:.2f}MB / {max_size_mb}MB")
         except Exception as e:

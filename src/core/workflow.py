@@ -10,6 +10,7 @@ from src.agents.coder import CoderAgent
 from src.agents.debugger import DebuggerAgent
 from src.agents.deployer import DeployerAgent
 from src.agents.reviewer import ReviewerAgent
+from src.agents.tester import TesterAgent
 
 # Agent Instance တွေ ဆောက်မယ်
 architect = ArchitectAgent()
@@ -18,6 +19,7 @@ coder = CoderAgent()
 debugger = DebuggerAgent()
 deployer = DeployerAgent()
 reviewer = ReviewerAgent()
+tester = TesterAgent()
 
 # --- Router Logic (New) ---
 def intent_analyzer(state: AgentState):
@@ -89,6 +91,13 @@ def route_tech_lead(state: AgentState):
         # အရင်က deployer ကိုတန်းသွားတာ၊ အခု reviewer ကိုအရင်ဖြတ်မယ်
         return "reviewer"
 
+def route_tester(state: AgentState):
+    """Tester က Error တွေ့ရင် Tech Lead ဆီပြန်၊ မတွေ့ရင် Reviewer ဆီဆက်သွား"""
+    if state.get("error_logs"):
+        return "tech_lead" # ❌ Fail -> Fix
+    else:
+        return "reviewer"        
+
 def route_deployment(state: AgentState):
     """Deployer က Error ပြန်ပို့ရင် Tech Lead ဆီပြန်သွား၊ မဟုတ်ရင် ပြီးမယ်"""
     if state.get("error_logs"):
@@ -104,6 +113,7 @@ workflow.add_node("architect", architect.execute)
 workflow.add_node("tech_lead", tech_lead.execute)
 workflow.add_node("coder", coder.execute)
 workflow.add_node("debugger", debugger.execute)
+workflow.add_node("tester", tester.execute)
 workflow.add_node("deployer", deployer.execute)
 workflow.add_node("reviewer", reviewer.execute) 
 
@@ -137,11 +147,18 @@ workflow.add_conditional_edges(
 # Coder -> Debugger (ရေးပြီးရင် အမှားစစ်)
 workflow.add_edge("coder", "debugger")
 
-# 🔥 FIX: Debugger ပြီးရင် Reviewer ဆီမသွားတော့ဘဲ Tech Lead ဆီပြန်သွားမယ် 
-# (နောက်ထပ်ရေးစရာကျန်သေးလား Loop ပတ်စစ်ဖို့)
-workflow.add_edge("debugger", "tech_lead")
+workflow.add_edge("debugger", "tester")
 
-# 🔥 FIX: Task အကုန်ပြီးလို့ Reviewer ဝင်စစ်ပြီးမှ Deployer ဆီသွားမယ်
+workflow.add_conditional_edges(
+    "tester",
+    route_tester,
+    {
+        "tech_lead": "tech_lead", # Error ရှိရင် ပြန်ပြင်
+        "reviewer": "reviewer"    # အောင်မြင်ရင် Review ဆက်လုပ်
+    }
+)
+
+# Reviewer -> Deployer
 workflow.add_edge("reviewer", "deployer")
 
 # 🔥 FIX: Deployer ပြီးရင် အခြေအနေကြည့်ပြီး လမ်းခွဲမယ်
