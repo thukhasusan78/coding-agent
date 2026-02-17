@@ -1,11 +1,12 @@
 import os
 import time
 import requests
+import re
 from src.core.state import AgentState
 from src.core.notifier import notifier
 from src.tools import git_tools, file_tools
 from src.runtime.docker_mgr import docker_mgr
-from src.core.llm import llm_engine # Brain ကို ခေါ်သုံးမယ်
+from src.core.llm import llm_engine 
 from config.settings import settings
 from google.genai.types import GenerateContentConfig
 
@@ -16,49 +17,56 @@ class DeployerAgent:
         created_files = state.get('created_files', [])
         subdomain = state.get('subdomain')
         mission = state.get('mission', "").lower()
+        
         # 📡 Telegram Alert
-        subdomain = state.get('subdomain', 'app')
-        await notifier.send_status(f"🚀 Deployment Phase: Launching `{subdomain}`...")
+        await notifier.send_status(f"🚀 Deployment Phase: Initializing...")
 
         # 1. Auto Git Push
         git_res = git_tools.auto_push("Auto-update by Jarvis Agent")
         logs.append(f"Git: {git_res}")
         
         # 2. Identify Main File & Configuration
-        # အသစ်ဖန်တီးထားတဲ့ ဖိုင်တွေထဲမှာ Main ပါလားရှာမယ်
         main_file = next((f for f in created_files if "app" in f or "main" in f or "bot" in f or "index" in f), None)
         
-        # 🔥 FIX: ဖိုင်အသစ်မရှိရင် Workspace ထဲက Project အဟောင်းတွေကို ရှာမယ် (Auto-Discovery)
+        # 🔥 FIX: Search Logic Improvement
         if not main_file:
             print("🔍 Searching existing projects in workspace...")
             best_match = None
             highest_score = 0
             
-            # Workspace ထဲက ဖိုင်အားလုံးကို လိုက်စစ်မယ်
             workspace_dir = "/app/workspace"
+            
+            # 🛑 IGNORE LIST: ဒီ Folder တွေထဲ လုံးဝဝင်မရှာဘူး
+            ignore_dirs = [
+                "__pycache__", ".git", "venv", "env", "test_env", 
+                "site-packages", "lib", "bin", "include", "node_modules"
+            ]
+
             for root, dirs, files in os.walk(workspace_dir):
-                if "memory_db" in root or "__pycache__" in root or ".git" in root: 
+                # Filter out ignored directories
+                dirs[:] = [d for d in dirs if d not in ignore_dirs and not any(x in os.path.join(root, d) for x in ignore_dirs)]
+                
+                # Double check root path just in case
+                if any(ignored in root for ignored in ignore_dirs):
                     continue
                 
                 for file in files:
-                    # Run လို့ရမယ့် ဖိုင်အမျိုးအစားဖြစ်ရမယ်
                     if file in ["main.py", "app.py", "index.py", "streamlit_app.py", "bot.py"]:
                         full_path = os.path.join(root, file)
                         folder_name = os.path.basename(root).lower()
                         
-                        # User ပြောတဲ့ mission ထဲက စကားလုံးတွေနဲ့ တိုက်စစ်မယ်
-                        # ဥပမာ: mission="bitcoin run", folder="bitcoin_tracker" -> Match!
                         score = 0
-                        if folder_name in mission: score += 2
+                        if folder_name in mission: score += 5 # Folder Name တူရင် Score ပိုပေး
                         if "bitcoin" in mission and "bitcoin" in folder_name: score += 2
                         
                         # အသစ်ပြင်ထားတဲ့ ဖိုင်ဆို ပိုဦးစားပေးမယ်
-                        mtime = os.path.getmtime(full_path)
-                        
-                        # ပထမဆုံးတွေ့တဲ့ကောင် (သို့) Score များတဲ့ကောင်ကို မှတ်ထားမယ်
+                        try:
+                            mtime = os.path.getmtime(full_path)
+                            if time.time() - mtime < 300: score += 3 # 5 မိနစ်အတွင်းပြင်ထားရင်
+                        except: pass
+
                         if score > highest_score or best_match is None:
                             highest_score = score
-                            # Relative path ပြောင်းမယ် (src/tools/files.py က relative ပဲသိလို့)
                             best_match = os.path.relpath(full_path, workspace_dir)
 
             if best_match:
@@ -69,23 +77,31 @@ class DeployerAgent:
                 logs.append("⚠️ No runnable project found in workspace.")
 
         if main_file:
-            # Subdomain Determination
+            # Subdomain / Container Name Determination
             if not subdomain:
                 folder_name = os.path.dirname(main_file)
-                subdomain = folder_name.replace("_", "-").lower() if folder_name else "jarvis-app"
+                if folder_name and folder_name != ".":
+                    # 🔥 FIX: Slash တွေကို Dash ပြောင်း၊ Special Char တွေဖယ်ထုတ်
+                    clean_name = folder_name.replace("/", "-").replace("\\", "-").replace("_", "-")
+                    subdomain = re.sub(r'[^a-z0-9-]', '', clean_name.lower())
+                else:
+                    subdomain = "jarvis-app"
+            
+            # Ensure subdomain is valid for Docker
+            subdomain = subdomain[:63].strip('-') # Docker Limit
+            
+            await notifier.send_status(f"🚀 Launching Project: `{subdomain}`")
 
             # App Type & Port Detection
             file_content = file_tools.read_file(main_file)
             image = "python:3.11-slim"
             
-            # 🔥 FIX: Container ထဲမှာ Folder အထပ်မရှိတော့လို့ ဖိုင်နာမည်သန့်သန့်ကိုပဲ ယူမယ်
             container_file = os.path.basename(main_file)
             
-            # 🔥 Default Command (အရင်ဆုံး ဒါကို ကြေညာရမယ်)
+            # Default Command
             command = f"python {container_file}"
             port = 8000
 
-            # Framework ပေါ်မူတည်ပြီး Command ပြောင်းမယ်
             if "streamlit" in file_content:
                 port = 8501
                 command = f"streamlit run {container_file} --server.port 8501 --server.address 0.0.0.0"
@@ -94,30 +110,25 @@ class DeployerAgent:
                 app_module = container_file.replace(".py", "")
                 command = f"uvicorn {app_module}:app --host 0.0.0.0 --port 8000"
 
-            # --- Smart Command Strategy ---
             current_command = command
-            
-            # 3. Smart Deployment Loop (Auto-Fixing)
-            print(f"🚀 Deploying {subdomain} with Smart Recovery...")
-            logs.append(f"🚀 Deploying {subdomain}...")
-
-            # Project Folder အပြည့်အစုံ
             project_full_path = os.path.dirname(os.path.join("/app/workspace", main_file))
+            deploy_res = "Init"
             
-            deploy_res = "Init" # Variable initialize
-            
-            # 🔥 ၃ ခါအထိ ကြိုးစားခွင့်ပေးမယ်
+            # 3. Smart Deployment Loop
+            print(f"🚀 Deploying {subdomain}...")
+            logs.append(f"🚀 Deploying container `{subdomain}`...")
+
             for attempt in range(3):
                 try:
-                    logs.append(f"🔄 Attempt {attempt+1}: Trying command -> {current_command}")
+                    logs.append(f"🔄 Attempt {attempt+1}: {current_command}")
                     
-                    # Container အဟောင်းရှိရင် အရင်ဖျက်မယ် (Clean Start ရဖို့)
+                    # Kill Old
                     try:
                         old = docker_mgr.client.containers.get(subdomain)
                         old.remove(force=True)
                     except: pass
 
-                    # Run မယ်
+                    # Run
                     deploy_res = docker_mgr.start_container(
                         image=image,
                         name=subdomain,
@@ -127,22 +138,17 @@ class DeployerAgent:
                         code_path=project_full_path
                     )
 
-                    # ၅ စက္ကန့်လောက် စောင့်ပြီး Error တက်မတက် "ချောင်း" ကြည့်မယ်
                     time.sleep(5) 
                     container = docker_mgr.client.containers.get(subdomain)
-                    
-                    # Log တွေကို စစ်မယ်
                     recent_logs = container.logs().decode('utf-8')
                     
-                    # Error စစ်ဆေးခြင်း
-                    if "Error" in recent_logs or "Exception" in recent_logs or "not found" in recent_logs or container.status != "running":
-                        print(f"⚠️ Deployment Warning on Attempt {attempt+1}")
+                    if "Error" in recent_logs or "Exception" in recent_logs or container.status != "running":
+                        print(f"⚠️ Warning on Attempt {attempt+1}")
                         
                         # 🔥 BRAIN POWER: Gemini 2.5 Pro (Thinking Model)
                         if attempt < 2: 
                             logs.append(f"⚠️ Error detected. Asking Gemini 2.5 Pro to fix command...")
                             
-                            # 👇 OpenRouter မသုံးတော့ဘဲ Google Client တိုက်ရိုက်သုံးမယ်
                             client = llm_engine.get_gemini_client()
                             
                             prompt = f"""
@@ -150,30 +156,24 @@ class DeployerAgent:
                             I tried to run a Python container but it failed.
                             
                             CONTEXT:
-                            - File structure inside container: /app/{container_file} (and other files injected flatly)
-                            - Current Command: {current_command}
-                            - ERROR LOGS:
-                            {recent_logs[-1000:]}
+                            - File: {container_file}
+                            - Command: {current_command}
+                            - LOGS: {recent_logs[-1000:]}
 
                             TASK:
-                            - Analyze the error (e.g., ModuleNotFound, FileDoesNotExist).
-                            - Return ONLY the corrected bash command to run the app.
-                            - Do NOT include 'pip install'. Just the run command.
-                            - Example Output: streamlit run main.py --server.port 8501
-                            
-                            RESPONSE (Command ONLY):
+                            - Analyze the error.
+                            - Return ONLY the corrected bash command.
+                            - NO explanation.
                             """
                             
                             try:
-                                # 👇 Gemini Syntax (Settings မှာ MODEL_ARCHITECT ကို 2.5 Pro ထားမယ်)
                                 response = client.models.generate_content(
-                                    model=settings.MODEL_ARCHITECT, 
+                                    model=settings.MODEL_ARCHITECT, # 2.5 Pro
                                     contents=prompt,
                                     config=GenerateContentConfig(temperature=0.2)
                                 )
                                 
                                 fixed_command = response.text.strip().replace("`", "")
-                                print(f"💡 Gemini suggested fix: {fixed_command}")
                                 logs.append(f"💡 AI Fix: Switching to '{fixed_command}'")
                                 current_command = fixed_command 
                                 continue 
@@ -182,13 +182,14 @@ class DeployerAgent:
 
                     else:
                         logs.append("✅ Container seems stable.")
-                        break # အောင်မြင်ရင် Loop ထဲက ထွက်မယ်
+                        break 
 
                 except Exception as e:
                     logs.append(f"❌ Exception: {e}")
                     time.sleep(2)
 
             logs.append(str(deploy_res))
+            
             # 📜 Container Log ယူပြီး Telegram ပို့မယ်
             try:
                 container = docker_mgr.client.containers.get(subdomain)
@@ -196,17 +197,20 @@ class DeployerAgent:
 
                 # Log ဖိုင်သိမ်း
                 log_file = f"workspace/{subdomain}_deploy.log"
+                # Folder မရှိရင်ဆောက်
+                os.makedirs(os.path.dirname(log_file), exist_ok=True)
+                
                 with open(log_file, "w") as f:
                     f.write(raw_logs)
             except: 
                 pass
             
             # 🔥 Smart Health Check Logic
-            # "Deployed" ဆိုတဲ့ စာလုံးပါရင်လည်း Success လို့ ယူဆမယ်
+            # "Deployed" (သို့) "Success" ဆိုတဲ့ စာလုံးပါရင် အောင်မြင်တယ်လို့ ယူဆပြီး Health Check စမယ်
             if "SUCCESS" in str(deploy_res) or "Started" in str(deploy_res) or "Restarted" in str(deploy_res) or "Deployed" in str(deploy_res):
                 
                 # 🛑 Simple Script Bypass: Web Server မဟုတ်ရင် Health Check ကျော်မယ်
-                # Docker Log ထဲမှာ "Uvicorn running" (သို့) "Streamlit" မတွေ့ရင် Script လို့ ယူဆမယ်
+                # Docker Log ထဲမှာ "Uvicorn running" (သို့) "Streamlit" မတွေ့ရင် Script (Bot) လို့ ယူဆမယ်
                 container = docker_mgr.client.containers.get(subdomain)
                 initial_logs = container.logs().decode('utf-8').lower()
                 
