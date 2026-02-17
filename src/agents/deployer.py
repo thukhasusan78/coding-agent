@@ -2,6 +2,7 @@ import os
 import time
 import requests
 from src.core.state import AgentState
+from src.core.notifier import notifier
 from src.tools import git_tools, file_tools
 from src.runtime.docker_mgr import docker_mgr
 from src.core.llm import llm_engine # Brain ကို ခေါ်သုံးမယ်
@@ -14,6 +15,9 @@ class DeployerAgent:
         created_files = state.get('created_files', [])
         subdomain = state.get('subdomain')
         mission = state.get('mission', "").lower()
+        # 📡 Telegram Alert
+        subdomain = state.get('subdomain', 'app')
+        await notifier.send_status(f"🚀 Deployment Phase: Launching `{subdomain}`...")
 
         # 1. Auto Git Push
         git_res = git_tools.auto_push("Auto-update by Jarvis Agent")
@@ -181,11 +185,39 @@ class DeployerAgent:
                     time.sleep(2)
 
             logs.append(str(deploy_res))
+            # 📜 Container Log ယူပြီး Telegram ပို့မယ်
+            try:
+                container = docker_mgr.client.containers.get(subdomain)
+                raw_logs = container.logs().decode('utf-8')
+
+                # Log ဖိုင်သိမ်း
+                log_file = f"workspace/{subdomain}_deploy.log"
+                with open(log_file, "w") as f:
+                    f.write(raw_logs)
+            except: 
+                pass
             
             # 🔥 Smart Health Check Logic
             if "SUCCESS" in str(deploy_res) or "Started" in str(deploy_res) or "Restarted" in str(deploy_res):
+                
+                # 🛑 Simple Script Bypass: Web Server မဟုတ်ရင် Health Check ကျော်မယ်
+                # Docker Log ထဲမှာ "Uvicorn running" (သို့) "Streamlit" မတွေ့ရင် Script လို့ ယူဆမယ်
+                container = docker_mgr.client.containers.get(subdomain)
+                initial_logs = container.logs().decode('utf-8').lower()
+                
+                if not any(x in initial_logs for x in ["listening", "running on", "uvicorn", "streamlit", "http server"]):
+                    print(f"ℹ️ {subdomain} appears to be a background script (No Web Server detected). Skipping HTTP Health Check.")
+                    final_url = "Running in Background (Check Logs)"
+                    logs.append("✅ Background Script Started Successfully.")
+                    # 📡 Log ပို့မယ်
+                    await notifier.send_status("✅ Background Script Running. Sending logs...")
+                    await notifier.send_log_file(log_file, caption=f"📜 Execution Log: {subdomain}")
+                    return {"final_report": f"🚀 Script is running in background!\nCheck logs with: `docker logs -f {subdomain}`"}
+
+                # Web Server ဆိုမှ အောက်က Health Check ကို ဆက်လုပ်မယ်
                 print("🏥 Starting Smart Health Check...")
                 is_healthy = False
+
                 internal_url = f"http://{subdomain}:{port}"
                 max_retries = 30 
                 retry_interval = 5

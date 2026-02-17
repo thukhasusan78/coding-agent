@@ -6,6 +6,7 @@ import signal
 import psutil
 from src.core.state import AgentState
 from src.core.llm import llm_engine
+from src.core.notifier import notifier
 from config.settings import settings
 from src.tools.files import file_tools
 
@@ -21,105 +22,81 @@ class TesterAgent:
         logs = state.get('logs', [])
         created_files = state.get('created_files', [])
         
-        # 1. Identify Target File (Main Entry Point)
-        # Deployer မတိုင်ခင် စစ်မှာမို့ Main File ကို ဒီအဆင့်မှာကတည်းက ရှာရမယ်
+        # Main File ရှာမယ်
         main_file = next((f for f in created_files if f.endswith(".py") and any(x in f for x in ["main", "app", "bot", "index", "server"])), None)
-        
         if not main_file:
-            # အကယ်၍ Main file မတွေ့ရင် Python file တစ်ခုခုကို ယူမယ်
             main_file = next((f for f in created_files if f.endswith(".py")), None)
 
         if not main_file:
-            return {
-                "logs": logs + ["⚠️ Tester: No Python file found to test. Skipping."],
-                "error_logs": ""
-            }
+            return {"logs": logs + ["⚠️ Tester: No Python file found."], "error_logs": ""}
 
-        print(f"🧪 Tester: Starting Quality Control on {main_file}...")
-        logs.append(f"🧪 Tester: Running pre-flight checks on {main_file}...")
+        # 📡 Telegram Status ပို့မယ်
+        await notifier.send_status(f"🧪 Testing Phase: Verifying `{main_file}`...")
 
-        # 2. Setup Isolated Environment (Feature Proof)
+        # Environment ပြင်ဆင်ခြင်း
         if not os.path.exists(self.python_exec):
-            logs.append("⚙️ Tester: Creating isolated virtual environment...")
             subprocess.run(["python", "-m", "venv", self.venv_dir], check=True)
 
-        # 3. Install Dependencies (Smart Check)
-        # Requirements.txt ရှိရင် အရင်သွင်းမယ်
+        # Requirements သွင်းခြင်း
         project_dir = os.path.dirname(os.path.join("/app/workspace", main_file))
         req_path = os.path.join(project_dir, "requirements.txt")
         
         if os.path.exists(req_path):
-            logs.append("📦 Tester: Installing dependencies...")
-            install_res = subprocess.run(
-                [self.pip_exec, "install", "-r", req_path], 
-                capture_output=True, text=True
-            )
+            install_res = subprocess.run([self.pip_exec, "install", "-r", req_path], capture_output=True, text=True)
             if install_res.returncode != 0:
-                # Dependency Error ဆိုရင် Tech Lead ဆီ ချက်ချင်းပြန်ပို့
-                error_msg = f"Dependency Installation Failed:\n{install_res.stderr}"
-                print("❌ Tester: Pip Install Failed")
-                return {
-                    "error_logs": error_msg,
-                    "logs": logs + [f"❌ Tester: Dependency Error in {req_path}"]
-                }
+                # ❌ Fail ဖြစ်ရင် Log ပို့မယ်
+                await notifier.send_status(f"❌ Dependency Error in `{req_path}`")
+                return {"error_logs": install_res.stderr, "logs": logs}
         
-        # 4. DRY RUN (The Sandbox Test)
-        # Code ကို တကယ် Run ကြည့်မယ် (Timeout 10s)
-        # Web Server ဆိုရင် 10s နေလို့ မသေရင် Pass
-        # Script ဆိုရင် Exit Code 0 ဆိုရင် Pass
-        
+        # Test Run လုပ်ခြင်း
         full_path = os.path.join("/app/workspace", main_file)
-        logs.append(f"🚀 Tester: Dry running {main_file}...")
+        
+        # Log စာသား စုစည်းမယ်
+        log_content = f"--- TEST REPORT FOR {main_file} ---\n"
 
         try:
-            # Process ကို စတင်မယ်
             process = subprocess.Popen(
                 [self.python_exec, full_path],
                 cwd=os.path.dirname(full_path),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                preexec_fn=os.setsid # Group ID ခွဲမယ် (Kill ရလွယ်အောင်)
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, preexec_fn=os.setsid
             )
 
-            # 10 စက္ကန့် စောင့်ကြည့်မယ်
+            stdout, stderr = "", ""
+            return_code = 0
+            
             try:
                 stdout, stderr = process.communicate(timeout=10)
                 return_code = process.returncode
             except subprocess.TimeoutExpired:
-                # Web Server (Daemon) တွေက Timeout ဖြစ်တာ ပုံမှန်ပဲ (ဆိုလိုတာက မကွဲသွားဘူး)
-                print("✅ Tester: App is running stable (Timeout reached, which is good for Servers).")
-                
-                # အတင်းပိတ်မယ်
                 os.killpg(os.getpgid(process.pid), signal.SIGTERM)
-                return_code = 0 # Pass လို့ သတ်မှတ်မယ်
-                stdout = "Process running..."
-                stderr = ""
+                stdout = "Service is running successfully (Timeout reached)."
+            
+            # Logs တွေကို ပေါင်းမယ်
+            log_content += f"\n[STDOUT]:\n{stdout}\n\n[STDERR]:\n{stderr}\n\n[EXIT CODE]: {return_code}\n"
 
-            # 5. Result Analysis with AI (Gemini 3 Flash)
+            # Log ဖိုင်ထုတ်မယ်
+            log_file = f"workspace/{os.path.basename(main_file)}_test.log"
+            with open(log_file, "w") as f:
+                f.write(log_content)
+            
+            # Result စစ်ဆေးမယ်
             if return_code != 0:
-                print(f"❌ Tester: Runtime Error Detected (Exit Code: {return_code})")
+                # ❌ Fail -> Telegram ပို့
+                await notifier.send_status(f"❌ Test Failed for `{main_file}`. Sending logs...")
+                await notifier.send_log_file(log_file, caption=f"❌ Test Failure Log")
                 
-                # Error Log ကို AI ဆီပို့ပြီး သုံးသပ်ခိုင်းမယ်
+                # AI Analysis (Log အတိုကောက်)
                 analysis = await self._analyze_error(stderr or stdout, main_file)
-                
-                return {
-                    "error_logs": f"Runtime Error in {main_file}:\n{stderr}\n\nAI Analysis: {analysis}",
-                    "logs": logs + [f"❌ Tester: Runtime Check Failed. {analysis}"]
-                }
+                return {"error_logs": f"Runtime Error:\n{stderr}\nAnalysis: {analysis}", "logs": logs}
             
             else:
-                print("✅ Tester: Test Passed!")
-                return {
-                    "error_logs": "", # Error မရှိ
-                    "logs": logs + ["✅ Tester: Passed stability check."]
-                }
+                # ✅ Pass -> Telegram ပို့
+                await notifier.send_status(f"✅ Test Passed for `{main_file}`!")
+                return {"error_logs": "", "logs": logs + ["✅ Tester Passed"]}
 
         except Exception as e:
-            return {
-                "error_logs": f"Tester Exception: {str(e)}",
-                "logs": logs
-            }
+            return {"error_logs": str(e), "logs": logs}
 
     async def _analyze_error(self, error_log: str, filename: str) -> str:
         """

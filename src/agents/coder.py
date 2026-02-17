@@ -5,6 +5,7 @@ from google import genai
 from google.genai.types import GenerateContentConfig
 from src.core.state import AgentState
 from src.core.llm import llm_engine
+from src.core.notifier import notifier
 from config.settings import settings
 from src.tools.files import file_tools
 
@@ -21,6 +22,7 @@ socket.getaddrinfo = new_getaddrinfo
 class CoderAgent:
     async def execute(self, state: AgentState):
         task = state['current_task']
+        await notifier.send_status(f"⚡ Coder: Writing code for `{task['file']}`...")
         existing_code = file_tools.read_file(task['file'])
         structure = file_tools.get_project_structure()
         

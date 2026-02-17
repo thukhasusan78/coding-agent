@@ -14,24 +14,37 @@ class SeniorEngineerBrain:
     def _manage_memory_health(self):
         """
         🔥 AUTO-CLEANUP: Database ဖောင်းပွလာရင် အသစ်လဲမယ့် စနစ်
-        RAM 2GB VPS မှာ SQLite က 50MB ကျော်ရင် Query လေးပြီး Hang တတ်လို့
-        Limit ကျော်တာနဲ့ အဟောင်းကိုဖျက်ပြီး အသစ်ပြန်စမယ်။
+        RAM 2GB VPS မှာ SQLite က 500MB ကျော်ရင် Query လေးပြီး Hang တတ်လို့
+        Warning ပေးမယ်၊ အရမ်းများမှ ဖျက်မယ်။
         """
         # Workspace Folder မရှိရင် အရင်ဆောက်မယ်
         os.makedirs("workspace", exist_ok=True)
         
         db_path = "workspace/checkpoints.sqlite"
-        # 🔥 Senior Fix: Limit ကို 500MB ထိ တိုးပေးလိုက်မယ် (VPS 2GB မှာ ဒီလောက်က အေးဆေးပါ)
-        max_size_mb = 500 
+        
+        # Warning Limit (သတိပေးရုံ)
+        soft_limit_mb = 500
+        # Hard Limit (ဖျက်မယ့်အဆင့် - VPS မကွဲအောင်)
+        hard_limit_mb = 900 
         
         try:
             if os.path.exists(db_path):
                 size_mb = os.path.getsize(db_path) / (1024 * 1024)
-                if size_mb > max_size_mb:
-                    # ချက်ချင်းမဖျက်တော့ဘူး၊ Backup လုပ်ပြီးမှ ရှင်းခိုင်းမယ် (Safety First)
-                    print(f"⚠️ Memory Warning: Database is huge ({size_mb:.2f}MB). Consider restarting agent manually.")
+                
+                if size_mb > hard_limit_mb:
+                    print(f"🚨 CRITICAL MEMORY ({size_mb:.2f}MB). Wiping database to save VPS...")
+                    # Database Related File တွေကို (.wal, .shm အပါအဝင်) အကုန်ရှင်းမယ်
+                    for f in glob.glob("workspace/checkpoints.sqlite*"):
+                        try:
+                            os.remove(f)
+                            print(f"🗑️ Deleted old memory: {f}")
+                        except Exception as e:
+                            print(f"⚠️ Failed to delete {f}: {e}")
+                        
+                elif size_mb > soft_limit_mb:
+                    print(f"⚠️ Memory Warning: Database is huge ({size_mb:.2f}MB). Consider manual reset.")
                 else:
-                    print(f"✅ Memory Health Good: {size_mb:.2f}MB / {max_size_mb}MB")
+                    print(f"✅ Memory Health Good: {size_mb:.2f}MB")
         except Exception as e:
             print(f"⚠️ Memory Check Error: {e}")
 
