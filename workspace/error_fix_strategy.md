@@ -1,29 +1,30 @@
 import os
 import textwrap
-import shutil
 
 def fix_deployment_structure():
     """
     Senior Developer Fix:
-    1. Consolidates dependencies for multi-app support (Bitcoin Tracker & Chinese Tutor).
+    1. Consolidates dependencies for multi-app support.
     2. Generates a production-ready Dockerfile with dynamic entry points.
     3. Configures .dockerignore to prevent sensitive/local data leakage.
     4. Standardizes Streamlit configuration for cloud deployment.
+    5. Fixes SQLite/ChromaDB compatibility for Linux environments.
     """
     root_dir = os.getcwd()
     
     # 1. Consolidate requirements.txt
-    # Analysis of file structure suggests: chromadb (memory_db), plotly (bitcoin), openai/langchain (tutor)
+    # Added pysqlite3-binary for ChromaDB compatibility on Linux
     consolidated_requirements = {
         "streamlit>=1.24.0",
         "pandas",
         "requests",
         "plotly",
         "chromadb",
-        "pysqlite3-binary", # Required for ChromaDB on many Linux distros
+        "pysqlite3-binary", 
         "openai",
         "pyyaml",
-        "watchdog"
+        "watchdog",
+        "python-dotenv"
     }
     
     sub_projects = ['bitcoin_price_tracker', 'chinese_tutor']
@@ -41,13 +42,16 @@ def fix_deployment_structure():
             f.write(f"{req}\n")
 
     # 2. Generate Optimized Dockerfile
+    # Note: We use a wrapper or environment variable to swap between apps
     dockerfile_content = textwrap.dedent("""
         FROM python:3.9-slim
         
         # Prevent Python from writing pyc files and buffering stdout/stderr
         ENV PYTHONDONTWRITEBYTECODE=1
         ENV PYTHONUNBUFFERED=1
-        # Default app path
+        ENV PYTHONPATH=/app
+        
+        # Default app path (can be overridden at runtime)
         ENV APP_PATH=bitcoin_price_tracker/main.py
         
         WORKDIR /app
@@ -66,15 +70,16 @@ def fix_deployment_structure():
         # Copy project structure
         COPY . .
         
-        # Ensure data directories exist
-        RUN mkdir -p /app/memory_db /app/data
+        # Ensure data directories exist and have permissions
+        RUN mkdir -p /app/memory_db /app/data && chmod -R 777 /app/memory_db
         
         EXPOSE 8501
         
-        HEALTHCHECK CMD curl --fail http://localhost:8501/_stcore/health
+        HEALTHCHECK --interval=30s --timeout=3s \\
+          CMD curl --fail http://localhost:8501/_stcore/health || exit 1
         
-        # Use shell form to allow environment variable expansion for APP_PATH
-        ENTRYPOINT streamlit run ${APP_PATH} --server.port=8501 --server.address=0.0.0.0
+        # Use shell form to allow environment variable expansion
+        ENTRYPOINT ["sh", "-c", "streamlit run ${APP_PATH} --server.port=8501 --server.address=0.0.0.0"]
     """).strip()
     
     with open(os.path.join(root_dir, 'Dockerfile'), 'w') as f:
@@ -93,18 +98,19 @@ def fix_deployment_structure():
         .github/
         *.log
         checkpoints.sqlite*
-        memory_db/
         active_processes.json
         cert.pem
         tunnel.log
         *.sqlite-shm
         *.sqlite-wal
+        memory_db/
     """).strip()
     
     with open(os.path.join(root_dir, '.dockerignore'), 'w') as f:
         f.write(dockerignore)
 
     # 4. Standardize Streamlit Config
+    # This ensures the app works behind proxies (like the one at thukha.online)
     dot_streamlit = os.path.join(root_dir, '.streamlit')
     os.makedirs(dot_streamlit, exist_ok=True)
     
@@ -115,6 +121,7 @@ def fix_deployment_structure():
         enableXsrfProtection = false
         port = 8501
         maxUploadSize = 200
+        address = "0.0.0.0"
 
         [browser]
         gatherUsageStats = false
@@ -130,8 +137,35 @@ def fix_deployment_structure():
     with open(os.path.join(dot_streamlit, 'config.toml'), 'w') as f:
         f.write(config_toml)
 
+    # 5. Fix ChromaDB SQLite issue (Common in Streamlit Cloud/Docker)
+    # We inject a fix into the main entry points to use pysqlite3 instead of the system sqlite3
+    sqlite_fix = textwrap.dedent("""
+        import sys
+        try:
+            __import__('pysqlite3')
+            sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+        except ImportError:
+            pass
+    """).strip()
+
+    entry_points = [
+        'bitcoin_price_tracker/main.py',
+        'chinese_tutor/main.py'
+    ]
+
+    for ep in entry_points:
+        full_path = os.path.join(root_dir, ep)
+        if os.path.exists(full_path):
+            with open(full_path, 'r') as f:
+                content = f.read()
+            
+            if "sys.modules['sqlite3']" not in content:
+                with open(full_path, 'w') as f:
+                    f.write(f"{sqlite_fix}\n{content}")
+
     print(f"✅ Deployment structure fixed.")
     print(f"✅ Created: requirements.txt, Dockerfile, .dockerignore, .streamlit/config.toml")
+    print(f"✅ Injected SQLite compatibility fixes into entry points.")
     print(f"\n[DEPLOYMENT COMMANDS]")
     print(f"1. Build: docker build -t multi-app-tracker .")
     print(f"2. Run Bitcoin Tracker: docker run -p 8501:8501 multi-app-tracker")
