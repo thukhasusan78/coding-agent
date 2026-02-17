@@ -50,9 +50,9 @@ def route_init(state: AgentState):
         prompt = f"""
         Analyze User Input and classify into ONE category:
 
-        1. DEPLOY
-           - Keywords: "run", "start", "restart", "launch", "give me link", "is it running?"
-           - Intent: Execute/View app. NO coding.
+        1. [DEPLOY]
+           - Keywords: "run", "start", "stop", "kill", "delete", "remove", "launch"
+           - Intent: Execute, stop or manage containers. NO new code.
 
         2. CHAT
            - Keywords: "hello", "hi", "how are you", "thanks", "who are you", "explain", "help"
