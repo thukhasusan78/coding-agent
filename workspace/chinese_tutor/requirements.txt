@@ -1,9 +1,0 @@
-text
-streamlit
-chinese-converter
-pypinyin
-pandas
-PyYAML
-requests
-chromadb
-python-dotenv
