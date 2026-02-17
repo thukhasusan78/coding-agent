@@ -74,22 +74,24 @@ class DeployerAgent:
             image = "python:3.11-slim"
             
             # 🔥 FIX: Container ထဲမှာ Folder အထပ်မရှိတော့လို့ ဖိုင်နာမည်သန့်သန့်ကိုပဲ ယူမယ်
-            # (ဥပမာ: bitcoin_tracker/main.py -> main.py)
             container_file = os.path.basename(main_file)
             
-            # --- Smart Command Strategy ---
-            current_command = command
-            
-            # Initial command logic (Basic Heuristic)
+            # 🔥 Default Command (အရင်ဆုံး ဒါကို ကြေညာရမယ်)
+            command = f"python {container_file}"
+            port = 8000
+
+            # Framework ပေါ်မူတည်ပြီး Command ပြောင်းမယ်
             if "streamlit" in file_content:
                 port = 8501
-                # ပထမအကြိမ်ကတော့ ရိုးရိုးပဲ စမ်းမယ်
-                current_command = f"streamlit run {container_file} --server.port 8501 --server.address 0.0.0.0"
+                command = f"streamlit run {container_file} --server.port 8501 --server.address 0.0.0.0"
             elif "fastapi" in file_content.lower():
                 port = 8000
                 app_module = container_file.replace(".py", "")
-                current_command = f"uvicorn {app_module}:app --host 0.0.0.0 --port 8000"
+                command = f"uvicorn {app_module}:app --host 0.0.0.0 --port 8000"
 
+            # --- Smart Command Strategy ---
+            current_command = command
+            
             # 3. Smart Deployment Loop (Auto-Fixing)
             print(f"🚀 Deploying {subdomain} with Smart Recovery...")
             logs.append(f"🚀 Deploying {subdomain}...")
@@ -97,7 +99,7 @@ class DeployerAgent:
             # Project Folder အပြည့်အစုံ
             project_full_path = os.path.dirname(os.path.join("/app/workspace", main_file))
             
-            deploy_success = False
+            deploy_res = "Init" # Variable initialize
             
             # 🔥 ၃ ခါအထိ ကြိုးစားခွင့်ပေးမယ်
             for attempt in range(3):
@@ -127,11 +129,12 @@ class DeployerAgent:
                     # Log တွေကို စစ်မယ်
                     recent_logs = container.logs().decode('utf-8')
                     
+                    # Error စစ်ဆေးခြင်း
                     if "Error" in recent_logs or "Exception" in recent_logs or "not found" in recent_logs or container.status != "running":
                         print(f"⚠️ Deployment Warning on Attempt {attempt+1}")
                         
                         # 🔥 BRAIN POWER: Error ကို Sonnet ဆီ ပို့ပြီး Command အသစ်တောင်းမယ်
-                        if attempt < 2: # နောက်ဆုံးအကြိမ် မဟုတ်သေးရင် ပြင်ခိုင်းမယ်
+                        if attempt < 2: 
                             logs.append(f"⚠️ Error detected. Asking Sonnet to fix command...")
                             
                             client = llm_engine.get_openrouter_client() # Sonnet (Paid)
@@ -155,19 +158,21 @@ class DeployerAgent:
                             RESPONSE (Command ONLY):
                             """
                             
-                            response = await client.chat.completions.create(
-                                model=settings.MODEL_ARCHITECT, # Sonnet
-                                messages=[{"role": "user", "content": prompt}]
-                            )
-                            
-                            fixed_command = response.choices[0].message.content.strip().replace("`", "")
-                            print(f"💡 Sonnet suggested fix: {fixed_command}")
-                            logs.append(f"💡 AI Fix: Switching to '{fixed_command}'")
-                            current_command = fixed_command # Command ကို အစားထိုးလိုက်ပြီ!
-                            continue # Loop အစကို ပြန်သွားပြီး Command အသစ်နဲ့ Run မယ်
-                        
+                            # Sonnet ကို မေးမယ်
+                            try:
+                                response = await client.chat.completions.create(
+                                    model=settings.MODEL_ARCHITECT, 
+                                    messages=[{"role": "user", "content": prompt}]
+                                )
+                                fixed_command = response.choices[0].message.content.strip().replace("`", "")
+                                print(f"💡 Sonnet suggested fix: {fixed_command}")
+                                logs.append(f"💡 AI Fix: Switching to '{fixed_command}'")
+                                current_command = fixed_command 
+                                continue # Loop အစကို ပြန်သွားမယ်
+                            except Exception as e:
+                                logs.append(f"❌ AI Fix Failed: {e}")
+
                     else:
-                        deploy_success = True
                         logs.append("✅ Container seems stable.")
                         break # အောင်မြင်ရင် Loop ထဲက ထွက်မယ်
 
