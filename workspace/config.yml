@@ -1,0 +1,15 @@
+# Tunnel UUID
+tunnel: a1f23505-ce09-4876-9af0-2e940f26ec53
+credentials-file: /etc/cloudflared/a1f23505-ce09-4876-9af0-2e940f26ec53.json
+
+ingress:
+  # Wildcard Subdomains (Quotes "..." ထည့်ပေးပါ)
+  - hostname: "*.thukha.online"
+    service: http://ironman-traefik:80  # Traefik container name အမှန်ထည့်ပါ
+
+  # Root Domain
+  - hostname: "thukha.online"
+    service: http://ironman-traefik:80
+
+  # Catch-all 404 (ကျန်တာဆို 404 ပြမည်)
+  - service: http_status:404

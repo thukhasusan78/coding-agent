@@ -1,0 +1,101 @@
+import asyncio
+from google import genai
+from google.genai.types import HttpOptions, HttpRetryOptions, GenerateContentConfig
+from src.core.state import AgentState
+from src.core.llm import llm_engine
+from config.settings import settings
+from src.tools.files import file_tools
+
+class CoderAgent:
+    async def execute(self, state: AgentState):
+        task = state['current_task']
+        existing_code = file_tools.read_file(task['file'])
+        structure = file_tools.get_project_structure()
+        
+        # Error ပါနေရင် အသစ်ကပြန်ရေးဖို့ Code ကို ရှင်းထုတ်လိုက်မယ်
+        if "Error" in existing_code: existing_code = ""
+
+        print(f"⚡ Coder ({settings.MODEL_CODER_NAME}): Started coding {task['file']}...")
+
+        prompt = f"""
+        You are a Senior Python Developer.
+        Task: {task['description']}
+        File: {task['file']}
+        Context: {structure}
+        Current Code: {existing_code}
+        Errors: {state.get('error_logs', 'None')}
+        Requirement: Write the COMPLETE code inside ```python ... ``` (or relevant language) block.
+        """
+        
+        code = ""
+        
+        # 🔥 Retry Logic with Key Rotation
+        for attempt in range(settings.MAX_RETRIES):
+            try:
+                current_key = llm_engine.key_manager.get_next_key()
+
+                # 2. SDK ရဲ့ Internal Retry ကိုပိတ်ဖို့ Client အသစ် ခဏဆောက်မယ်
+                # (Key Manager Logic မပျက်စေဘဲ Config ပြင်တဲ့နည်း)
+                safe_client = genai.Client(
+                    api_key=current_key,
+                    http_options=HttpOptions(
+                        retry_options=HttpRetryOptions(attempts=1) # ⚠️ SDK ကို မစောင့်ခိုင်းတော့ဘူး
+                    )
+                )
+
+                # 3. AFC (Tools) ကိုပိတ်ပြီး Code ရေးခိုင်းမယ်
+                config = GenerateContentConfig(
+                    temperature=0.2,
+                    tools=None, # ⚠️ Loop မပတ်အောင် Tool လုံးဝပိတ်ထားမယ်
+                    system_instruction="You are a coding engine. Output only code. Do not use tools."
+                )
+
+                # 4. Native Async Call (Thread မဟုတ်တော့လို့ ပေါ့ပါးသွားမယ်)
+                response = await safe_client.aio.models.generate_content(
+                    model=settings.MODEL_CODER_NAME,
+                    contents=prompt,
+                    config=config
+                )
+                
+                code = response.text
+                print(f"✅ Coder: Code generated successfully using Key ending in ...{current_key[-4:]}")
+                break 
+
+            except Exception as e:
+                error_msg = str(e)
+                print(f"⚠️ Attempt {attempt+1} Failed: {error_msg}")
+                
+                # 503 (Overload) ဖြစ်ရင် Model ပြောင်းမလား၊ စောင့်မလား
+                if "503" in error_msg or "429" in error_msg:
+                    # နောက်ဆုံးအကြိမ်ရောက်ရင် Backup Model (Flash 2.5) နဲ့ စမ်းမယ်
+                    if attempt == settings.MAX_RETRIES - 1:
+                        print("❌ 3 Flash Preview overloaded. Switching to 2.0 Flash as backup...")
+                        try:
+                            # Backup call
+                            backup_resp = await safe_client.aio.models.generate_content(
+                                model="gemini-2.5-flash", 
+                                contents=prompt,
+                                config=config
+                            )
+                            code = backup_resp.text
+                            break
+                        except:
+                            pass
+                
+                # Exponential Backoff (1s, 2s, 4s)
+                await asyncio.sleep(2 ** attempt)
+
+        # --- Code Parsing Logic (Original Feature) ---
+        if code and "```" in code:
+            parts = code.split("```")
+            if len(parts) > 1:
+                code = parts[1]
+                # Language identifier တွေကို ဖယ်ထုတ်မယ်
+                if code.startswith("python"): code = code[6:]
+                elif code.startswith("html"): code = code[4:]
+                elif code.startswith("css"): code = code[3:]
+                elif code.startswith("javascript"): code = code[10:]
+                elif code.startswith("js"): code = code[2:]
+                code = code.strip()
+            
+        return {"code_content": code}

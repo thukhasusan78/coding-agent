@@ -1,0 +1,13 @@
+api:
+  dashboard: true
+  insecure: true # Localhost ကနေ Dashboard ကြည့်ဖို့ (Dev Mode)
+
+providers:
+  docker:
+    endpoint: "unix:///var/run/docker.sock"
+    exposedByDefault: false # Agent က ခွင့်ပြုမှပဲ အပြင်ထွက်ခွင့်ပေးမယ် (Security)
+    network: "ironman_net"  # Traefik နဲ့ App တွေ ဆက်သွယ်မယ့် Network
+
+entryPoints:
+  web:
+    address: ":80"

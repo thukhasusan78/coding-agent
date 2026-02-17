@@ -1,0 +1,6 @@
+venv
+__pycache__
+.git
+workspace
+memory_db
+*.log

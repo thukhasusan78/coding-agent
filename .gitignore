@@ -1,0 +1,15 @@
+.env
+__pycache__/
+*.pyc
+*.log
+workspace/checkpoints.sqlite
+workspace/chroma_db/
+workspace/*.json
+.git/
+# .gitignore ဖိုင်ထဲမှာ ဒါတွေရှိမရှိ စစ်ပြီး မရှိရင်ထည့်လိုက်ပါ
+workspace/*.sqlite
+workspace/*.sqlite-shm
+workspace/*.sqlite-walworkspace/*.sqlite
+workspace/*.sqlite-wal
+workspace/*.sqlite-shm
+workspace/chroma_db/

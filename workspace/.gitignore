@@ -1,0 +1,10 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+upload_config.log
+workspace/checkpoints.sqlite
+workspace/chroma_db/
+workspace/*.json
+workspace/memory_db/

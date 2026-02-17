@@ -1,0 +1,37 @@
+# --- Core AI & Agent Framework ---
+python-telegram-bot==22.6
+google-genai
+openai
+langgraph
+langchain
+langchain_openai
+langchain_google_genai
+langgraph-checkpoint-sqlite
+docker
+aiosqlite
+pydantic
+
+# --- Utilities & System (Phase 1+2+3) ---
+python-dotenv==1.2.1
+aiohttp==3.13.3
+requests
+psutil              # RAM/CPU Monitoring & Process Management
+colorlog            # Colored Logging
+
+# --- Web & Browser Automation (Phase 2) ---
+playwright          # Browser Control (Selenium Replacement)
+beautifulsoup4      # Web Scraping
+lxml                # Faster HTML Parsing
+tavily-python       # Search Tool
+
+# --- Database & Memory ---
+chromadb
+
+# --- Web App & Dashboard ---
+streamlit
+plotly
+altair
+pandas
+numpy
+uvicorn
+fastapi
