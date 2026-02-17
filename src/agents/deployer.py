@@ -11,30 +11,56 @@ class DeployerAgent:
         final_url = "N/A"
         created_files = state.get('created_files', [])
         subdomain = state.get('subdomain')
+        mission = state.get('mission', "").lower()
 
         # 1. Auto Git Push
         git_res = git_tools.auto_push("Auto-update by Jarvis Agent")
         logs.append(f"Git: {git_res}")
         
         # 2. Identify Main File & Configuration
+        # အသစ်ဖန်တီးထားတဲ့ ဖိုင်တွေထဲမှာ Main ပါလားရှာမယ်
         main_file = next((f for f in created_files if "app" in f or "main" in f or "bot" in f or "index" in f), None)
         
-        # 🔥 FIX: အသစ်တွေထဲမှာ မပါရင် (ဥပမာ requirements.txt ပဲပြင်ရင်) ရှိပြီးသား Folder ထဲမှာ သွားရှာမယ်
-        if not main_file and created_files:
-            # ပထမဆုံး ဖိုင်ရဲ့ Folder ကို Project Folder လို့ ယူဆမယ်
-            project_dir = os.path.dirname(created_files[0])
-            if project_dir:
-                # အဲ့ဒီ Folder ထဲမှာ main.py တို့ app.py တို့ ရှိလား ရှာမယ်
-                possible_names = ["main.py", "app.py", "bot.py", "index.py", "streamlit_app.py"]
-                for name in possible_names:
-                    # Check if file exists using file_tools logic (path join)
-                    potential_path = os.path.join(project_dir, name)
-                    # workspace folder အောက်မှာ တကယ်ရှိလား စစ်မယ်
-                    if os.path.exists(os.path.join("/app/workspace", potential_path)):
-                        main_file = potential_path
-                        print(f"🔄 Found existing entry point: {main_file}")
-                        break
-        
+        # 🔥 FIX: ဖိုင်အသစ်မရှိရင် Workspace ထဲက Project အဟောင်းတွေကို ရှာမယ် (Auto-Discovery)
+        if not main_file:
+            print("🔍 Searching existing projects in workspace...")
+            best_match = None
+            highest_score = 0
+            
+            # Workspace ထဲက ဖိုင်အားလုံးကို လိုက်စစ်မယ်
+            workspace_dir = "/app/workspace"
+            for root, dirs, files in os.walk(workspace_dir):
+                if "memory_db" in root or "__pycache__" in root or ".git" in root: 
+                    continue
+                
+                for file in files:
+                    # Run လို့ရမယ့် ဖိုင်အမျိုးအစားဖြစ်ရမယ်
+                    if file in ["main.py", "app.py", "index.py", "streamlit_app.py", "bot.py"]:
+                        full_path = os.path.join(root, file)
+                        folder_name = os.path.basename(root).lower()
+                        
+                        # User ပြောတဲ့ mission ထဲက စကားလုံးတွေနဲ့ တိုက်စစ်မယ်
+                        # ဥပမာ: mission="bitcoin run", folder="bitcoin_tracker" -> Match!
+                        score = 0
+                        if folder_name in mission: score += 2
+                        if "bitcoin" in mission and "bitcoin" in folder_name: score += 2
+                        
+                        # အသစ်ပြင်ထားတဲ့ ဖိုင်ဆို ပိုဦးစားပေးမယ်
+                        mtime = os.path.getmtime(full_path)
+                        
+                        # ပထမဆုံးတွေ့တဲ့ကောင် (သို့) Score များတဲ့ကောင်ကို မှတ်ထားမယ်
+                        if score > highest_score or best_match is None:
+                            highest_score = score
+                            # Relative path ပြောင်းမယ် (src/tools/files.py က relative ပဲသိလို့)
+                            best_match = os.path.relpath(full_path, workspace_dir)
+
+            if best_match:
+                main_file = best_match
+                print(f"✅ Auto-Selected Project: {main_file}")
+                logs.append(f"✅ Auto-Selected Project: {main_file}")
+            else:
+                logs.append("⚠️ No runnable project found in workspace.")
+
         if main_file:
             # Subdomain Determination
             if not subdomain:
@@ -49,7 +75,6 @@ class DeployerAgent:
 
             if "streamlit" in file_content:
                 port = 8501
-                # Streamlit requires specific address binding
                 command = f"streamlit run {main_file} --server.port 8501 --server.address 0.0.0.0"
                 
             elif "fastapi" in file_content.lower():
@@ -61,34 +86,42 @@ class DeployerAgent:
             print(f"🚀 Deploying {subdomain} on Port {port}...")
             logs.append(f"🚀 Deploying {subdomain}...")
             
-            deploy_res = docker_mgr.start_container(
-                image=image,
-                name=subdomain,
-                port=port,
-                command=f"bash -c 'pip install -r requirements.txt && {command}'", 
-                env={"PORT": str(port)}
-            )
-            logs.append(deploy_res)
+            deploy_res = "Init"
+            try:
+                # 🔥 FIX: Container ရှိပြီးသားဆိုရင် Restart ပဲလုပ်မယ် (Loop မဖြစ်အောင်)
+                existing = docker_mgr.client.containers.get(subdomain)
+                if existing.status == "running":
+                    logs.append(f"ℹ️ Container {subdomain} is already running. Restarting...")
+                    existing.restart()
+                    deploy_res = f"✅ Container Restarted: {subdomain}"
+                else:
+                    raise Exception("Not running")
+            except:
+                # မရှိမှ အသစ် run မယ်
+                deploy_res = docker_mgr.start_container(
+                    image=image,
+                    name=subdomain,
+                    port=port,
+                    command=f"bash -c 'pip install -r requirements.txt && {command}'", 
+                    env={"PORT": str(port)}
+                )
             
-            # 🔥 OPENCLAW METHOD: "Smart State-Aware Monitoring"
-            if "SUCCESS" in str(deploy_res) or "Started" in str(deploy_res):
-                logs.append(f"🏥 Starting Smart Health Check for {subdomain}...")
+            logs.append(str(deploy_res))
+            
+            # 🔥 Smart Health Check Logic
+            if "SUCCESS" in str(deploy_res) or "Started" in str(deploy_res) or "Restarted" in str(deploy_res):
+                print("🏥 Starting Smart Health Check...")
                 is_healthy = False
                 internal_url = f"http://{subdomain}:{port}"
-                
-                # Maximum Wait Time: 5 Minutes (Install ကြာနိုင်လို့)
                 max_retries = 30 
-                retry_interval = 10 
+                retry_interval = 5
 
                 container = None
                 try:
                     container = docker_mgr.client.containers.get(subdomain)
-                except:
-                    pass
+                except: pass
 
                 for i in range(max_retries):
-                    print(f"⏳ Health Check Attempt {i+1}/{max_retries}...")
-                    
                     # 1. Check Crash
                     if container:
                         container.reload()
@@ -96,40 +129,33 @@ class DeployerAgent:
                             logs.append("❌ Container died prematurely.")
                             break
                     
-                    # 2. Check Logs (Install လုပ်နေလား ချောင်းကြည့်မယ်)
+                    # 2. Check Logs (Install လုပ်နေတုန်းလား)
                     try:
-                        # နောက်ဆုံး Log 10 ကြောင်းကို ယူမယ်
                         current_logs = container.logs().decode('utf-8')[-500:].lower()
-                        if "installing" in current_logs or "downloading" in current_logs or "building" in current_logs:
-                            print(f"⚙️ App is installing dependencies... Waiting.")
+                        if "installing" in current_logs or "downloading" in current_logs:
+                            print(f"⚙️ Installing dependencies... ({i}/{max_retries})")
                             time.sleep(retry_interval)
-                            continue # Install လုပ်တုန်းမို့ Error မစစ်ဘဲ ဆက်စောင့်မယ်
-                    except:
-                        pass
+                            continue 
+                    except: pass
 
-                    # 3. Active Ping (တကယ်တက်မတက် စစ်မယ်)
+                    # 3. Active Ping
                     try:
+                        print(f"⏳ Pinging App... ({i}/{max_retries})")
                         response = requests.get(internal_url, timeout=3)
                         if response.status_code < 500:
                             is_healthy = True
                             logs.append(f"✅ App is responding! (Status: {response.status_code})")
                             break
                     except Exception:
-                        # မရသေးရင် စောင့်မယ်
                         time.sleep(retry_interval)
                 
                 if is_healthy:
                     final_url = f"https://{subdomain}.thukha.online"
                 else:
-                    # 🚨 Time out ဖြစ်သွားရင် (သို့) Crash ရင်
-                    logs.append(f"❌ Smart Health Check Failed after {max_retries*retry_interval}s.")
+                    logs.append(f"❌ Smart Health Check Failed.")
                     try:
                         crash_log = container.logs().decode('utf-8')[-2000:]
-                        # Self-Healing Trigger လုပ်ဖို့ Return ပြန်မယ်
-                        return {
-                            "error_logs": crash_log,
-                            "logs": logs
-                        }
+                        return {"error_logs": crash_log, "logs": logs}
                     except:
                         return {"error_logs": "Unknown Error", "logs": logs}
             else:
@@ -140,7 +166,7 @@ class DeployerAgent:
         report = f"""
         🏁 **Mission Accomplished**
         🌍 Live URL: {final_url}
-        📂 Files: {len(created_files)}
+        📂 Files: {len(created_files)} (Auto-Selected: {main_file})
         🤖 Git: {git_res}
         
         (Note: If the URL is 502/Unreachable, wait 1-2 mins for Cloudflare Tunnel to propagate)
