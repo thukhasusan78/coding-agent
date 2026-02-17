@@ -1,48 +1,47 @@
 import os
 
-def fix_deployment_error():
+def fix_deployment_structure():
     """
     Fixes the 'requirements.txt not found' error by consolidating 
-    dependencies from sub-projects into a root requirements.txt file.
+    dependencies from subdirectories into the root directory.
     """
-    # Define paths to existing requirements files
-    sub_requirements = [
-        'bitcoin_price_tracker/requirements.txt',
-        'chinese_tutor/requirements.txt'
+    subprojects = [
+        'bitcoin_price_tracker',
+        'chinese_tutor'
     ]
     
-    root_requirements_path = 'requirements.txt'
-    unique_dependencies = set()
+    combined_requirements = set()
+    
+    # Standard dependencies often required for these types of apps if files are missing
+    base_requirements = {
+        'streamlit',
+        'pandas',
+        'requests',
+        'pyyaml'
+    }
+    combined_requirements.update(base_requirements)
 
-    print("Analyzing sub-project dependencies...")
-
-    for req_path in sub_requirements:
+    for project in subprojects:
+        req_path = os.path.join(project, 'requirements.txt')
         if os.path.exists(req_path):
-            try:
-                with open(req_path, 'r') as f:
-                    for line in f:
-                        dependency = line.strip()
-                        # Ignore empty lines and comments
-                        if dependency and not dependency.startswith('#'):
-                            unique_dependencies.add(dependency)
-                print(f"Successfully read: {req_path}")
-            except Exception as e:
-                print(f"Error reading {req_path}: {e}")
+            with open(req_path, 'r') as f:
+                for line in f:
+                    dep = line.strip()
+                    if dep and not dep.startswith('#'):
+                        combined_requirements.add(dep)
         else:
             print(f"Warning: {req_path} not found.")
 
-    # Add common deployment dependencies if missing
-    common_deps = {'streamlit', 'pandas', 'requests', 'pyyaml'}
-    unique_dependencies.update(common_deps)
-
     # Write the consolidated requirements.txt to the root directory
-    try:
-        with open(root_requirements_path, 'w') as f:
-            for dep in sorted(list(unique_dependencies)):
-                f.write(f"{dep}\n")
-        print(f"SUCCESS: Created root '{root_requirements_path}' with {len(unique_dependencies)} dependencies.")
-    except Exception as e:
-        print(f"FAILED to create root requirements file: {e}")
+    root_req_path = 'requirements.txt'
+    with open(root_req_path, 'w') as f:
+        for dep in sorted(combined_requirements):
+            f.write(f"{dep}\n")
+            
+    print(f"Successfully created {root_req_path} with {len(combined_requirements)} dependencies.")
 
 if __name__ == "__main__":
-    fix_deployment_error()
+    fix_deployment_structure()
+
+# To resolve the error immediately in a shell environment, run:
+# cat bitcoin_price_tracker/requirements.txt chinese_tutor/requirements.txt | sort | uniq > requirements.txt
