@@ -31,10 +31,13 @@ class TechLeadAgent:
             else:
                 # 🛑 Circuit Breaker: ၃ ခါကြိုးစားလို့မရရင် "လက်မြှောက်" မယ့် Logic
                 print("🛑 Max Retries Reached. Stopping Loop.")
+                error_msg = f"💥 Critical Failure: Tried to fix 3 times but failed. STOPPING to prevent infinite loop.\nLast Error: {error_logs[:500]}..."
+                
                 return {
                     "current_task": None,
-                    "plan": [], # Plan ကို Empty လုပ်လိုက်ရင် Agent ရပ်သွားမယ်
-                    "logs": [f"💥 Critical Failure: Tried to fix 3 times but failed. STOPPING to prevent infinite loop.\nLast Error: {error_logs[:500]}..."]
+                    "plan": [], 
+                    "final_report": error_msg, # 🔥 Signal ပေးလိုက်ပြီ
+                    "logs": [error_msg]
                 }
         # ပြီးပြီးသားမဟုတ်တဲ့ Task တစ်ခုကို ယူမယ်
         next_task = next((t for t in plan if t['status'] == 'pending'), None)

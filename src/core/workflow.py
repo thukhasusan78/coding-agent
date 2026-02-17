@@ -84,11 +84,16 @@ def route_init(state: AgentState):
 # --- Flow Logic ---
 def route_tech_lead(state: AgentState):
     """Tech Lead က ဆုံးဖြတ်မယ်: Task ကျန်သေးလား? ပြီးပြီလား?"""
+    
+    # 🔥 FIX: အကယ်၍ Tech Lead က 'Critical Failure' နဲ့ ပြီးသွားရင် Reviewer ဆီမပို့တော့ဘဲ ဇာတ်သိမ်းမယ်
+    final_report = state.get("final_report", "")
+    if "Critical Failure" in final_report:
+        return END
+
     if state.get("current_task"):
         return "coder"
     else:
-        # 🔥 FIX: Task အကုန်ပြီးမှ Reviewer ဆီသွားမယ် (Credit သက်သာအောင်)
-        # အရင်က deployer ကိုတန်းသွားတာ၊ အခု reviewer ကိုအရင်ဖြတ်မယ်
+        # Task အကုန်အောင်မြင်ပြီးမှ Reviewer ဆီသွားမယ်
         return "reviewer"
 
 def route_tester(state: AgentState):
